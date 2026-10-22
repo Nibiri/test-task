@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: crm
+      POSTGRES_DB: crm
+    ports:
+      - "54329:5432"
+    volumes:
+      - crm_pg:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm -d crm"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      EXTERNAL_CRM_BASE_URL: http://app:8000
+      EXTERNAL_CRM_TRANSPORT: http
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/var/www/html
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["serve"]
+
+  queue:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      EXTERNAL_CRM_BASE_URL: http://app:8000
+      EXTERNAL_CRM_TRANSPORT: http
+    volumes:
+      - ./backend:/var/www/html
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["queue"]
+
+  scheduler:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+    volumes:
+      - ./backend:/var/www/html
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["schedule"]
+
+  frontend:
+    image: node:22-bookworm
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    environment:
+      VITE_API_PROXY: http://app:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+
+volumes:
+  crm_pg:
